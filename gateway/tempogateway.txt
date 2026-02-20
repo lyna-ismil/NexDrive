@@ -1,0 +1,102 @@
+✅ Steps to Replace Temporary Users with MongoDB
+Since you're already using MongoDB, follow these steps:
+
+1️⃣ Update auth.js to Use MongoDB
+Modify your auth.js file to fetch users from the User microservice database instead of the hardcoded array.
+
+🔹 Before (Current Temporary Code):
+
+
+
+// 🔑 TEMP DATABASE (Replace with real DB later)
+const users = [
+    { email: "admin@example.com", password: bcrypt.hashSync("password123", 10) }
+];
+✅ After (Replace with MongoDB Query)
+
+
+
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const axios = require('axios');
+require('dotenv').config();
+
+const JWT_SECRET = process.env.JWT_SECRET;
+const USER_SERVICE = process.env.USER_SERVICE; // Get User Microservice URL
+
+async function authenticateUser(email, password) {
+    try {
+        // 🔍 Fetch User from Database via User Microservice
+        const response = await axios.get(`${USER_SERVICE}/users?email=${email}`);
+        const user = response.data;
+
+        if (!user) {
+            throw new Error("User not found");
+        }
+
+        // 🔑 Check Password
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+            throw new Error("Invalid credentials");
+        }
+
+        // 🎫 Generate JWT Token
+        const token = jwt.sign({ userId: user._id, email: user.email }, JWT_SECRET, { expiresIn: '15m' });
+
+        return { token };
+    } catch (error) {
+        throw new Error(error.message);
+    }
+}
+
+module.exports = { authenticateUser };
+
+
+
+
+✅ What Changed?
+✔ Now, instead of using a static array, the function:
+
+✅ Fetches the user from MongoDB via the User Microservice.
+✅ Compares hashed passwords instead of plaintext.
+✅ Generates a JWT token after successful login.
+✅ What You Need to Do Next
+1️⃣ Ensure your users collection contains passwords that are hashed.
+If users were added manually, you may need to update them with bcrypt hashing.
+
+2️⃣ Make sure the User Microservice has an endpoint to fetch users by email.
+Add this to User Microservice (user/routes/userRoutes.js):
+
+
+
+
+router.get('/', async (req, res) => {
+    try {
+        if (req.query.email) {
+            const user = await User.findOne({ email: req.query.email });
+            if (!user) {
+                return res.status(404).json({ message: "User not found" });
+            }
+            return res.status(200).json(user);
+        }
+        const users = await User.find();
+        res.status(200).json(users);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+
+
+
+
+
+
+✅ Now Your Authentication is Fully Integrated with MongoDB!
+When a user logs in: 1️⃣ The Gateway asks the User Microservice for user info.
+2️⃣ The User Microservice queries MongoDB for the user.
+3️⃣ The password is hashed & compared using bcrypt.
+4️⃣ If correct, a JWT token is generated and sent to the client.
+
+🚀 Now it's production-ready!

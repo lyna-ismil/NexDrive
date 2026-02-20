@@ -1,0 +1,33 @@
+Testing in Postman
+1️⃣ Login to Get Tokens
+
+POST http://localhost:5000/auth/login
+
+{
+    "email": "admin@example.com",
+    "password": "password123"
+}
+
+
+✅ Copy accessToken and refreshToken.
+
+2️⃣ Use Access Token to Access Microservices
+
+GET http://localhost:5000/bookings
+
+Headers:
+
+Authorization: Bearer YOUR_ACCESS_TOKEN
+
+
+3️⃣ Refresh Token
+
+POST http://localhost:5000/auth/refresh
+
+
+{
+    "token": "YOUR_REFRESH_TOKEN"
+}
+
+
+✅ If valid, you get a new access token.
