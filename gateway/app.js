@@ -98,7 +98,7 @@ const startMicroservices = () => {
       continue;
     }
 
-    const microserviceProcess = spawn('node', [service.path], {
+    const microserviceProcess = spawn('node', [`"${service.path}"`], {
       cwd: __dirname,
       stdio: 'inherit',
       shell: true
