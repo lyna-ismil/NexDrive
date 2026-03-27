@@ -12,6 +12,7 @@ const adminSchema = new mongoose.Schema({
     default: 'ADMIN',
     index: true
   },
+  photo: { type: String, trim: true, default: null },
   status: {
     type: String,
     enum: ['ACTIVE', 'SUSPENDED'],

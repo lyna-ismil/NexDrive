@@ -178,11 +178,17 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-// ✅ GET BOOKINGS BY USER
+// ✅ GET BOOKINGS BY USER (enriched with car data)
 router.get('/user/:userId', async (req, res, next) => {
   try {
     const bookings = await Booking.find({ userId: req.params.userId }).sort({ createdAt: -1 });
-    res.status(200).json(bookings);
+
+    const enriched = await Promise.all(bookings.map(async (b) => {
+      const car = await fetchFromService(`${CAR_SERVICE_URL}/cars/${b.carId}`);
+      return { ...b.toObject(), car: car || null };
+    }));
+
+    res.status(200).json(enriched);
   } catch (error) {
     next(error);
   }

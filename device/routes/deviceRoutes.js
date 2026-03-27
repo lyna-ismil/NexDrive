@@ -226,4 +226,64 @@ router.get('/:deviceId/verify',
   }
 );
 
+// ────────────────────────────────────────────────────────────
+// GET /devices/status — Connection status for ALL devices
+// Computes isConnected based on lastSeenAt (< 5 min = connected)
+// ────────────────────────────────────────────────────────────
+const TELEMETRY_SERVICE_URL = process.env.TELEMETRY_SERVICE || 'http://localhost:6005';
+const CONNECTION_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
+router.get('/status/all',
+  verifyGatewayOrigin, attachGatewayIdentity, requireRole('ADMIN', 'SUPER_ADMIN'),
+  async (req, res, next) => {
+    try {
+      const devices = await Device.find({ status: 'ACTIVE' }).lean();
+
+      const statuses = devices.map(d => {
+        const lastSeen = d.lastSeenAt ? new Date(d.lastSeenAt) : null;
+        const isConnected = lastSeen ? (Date.now() - lastSeen.getTime()) < CONNECTION_THRESHOLD_MS : false;
+        return {
+          vehicleId: d.carId || null,
+          deviceId: d.deviceId,
+          firmwareVersion: d.firmwareVersion || null,
+          isConnected,
+          lastSeen: lastSeen ? lastSeen.toISOString() : null
+        };
+      });
+
+      res.status(200).json(statuses);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// ────────────────────────────────────────────────────────────
+// GET /devices/status/:vehicleId — Single vehicle device status
+// ────────────────────────────────────────────────────────────
+router.get('/status/:vehicleId',
+  verifyGatewayOrigin, attachGatewayIdentity, requireRole('ADMIN', 'SUPER_ADMIN'),
+  async (req, res, next) => {
+    try {
+      const device = await Device.findOne({ carId: req.params.vehicleId, status: 'ACTIVE' }).lean();
+      if (!device) {
+        return res.status(200).json({ vehicleId: req.params.vehicleId, device: null, isConnected: false });
+      }
+
+      const lastSeen = device.lastSeenAt ? new Date(device.lastSeenAt) : null;
+      const isConnected = lastSeen ? (Date.now() - lastSeen.getTime()) < CONNECTION_THRESHOLD_MS : false;
+
+      res.status(200).json({
+        vehicleId: req.params.vehicleId,
+        deviceId: device.deviceId,
+        firmwareVersion: device.firmwareVersion || null,
+        isConnected,
+        lastSeen: lastSeen ? lastSeen.toISOString() : null
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 module.exports = router;

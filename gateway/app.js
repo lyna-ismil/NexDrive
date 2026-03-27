@@ -167,8 +167,9 @@ Object.keys(services).forEach(route => {
           proxyReq.setHeader('x-user-email', req.user.email || '');
         }
 
-        // Forward body for non-GET requests
-        if (req.body && Object.keys(req.body).length > 0 && req.method !== 'GET') {
+        // Forward body for non-GET requests (skip multipart — handled natively by proxy)
+        const contentType = req.headers['content-type'] || '';
+        if (req.body && Object.keys(req.body).length > 0 && req.method !== 'GET' && !contentType.includes('multipart/form-data')) {
           const bodyData = JSON.stringify(req.body);
           proxyReq.setHeader('Content-Type', 'application/json');
           proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));

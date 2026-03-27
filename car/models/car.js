@@ -8,6 +8,11 @@ const CarSchema = new mongoose.Schema({
   date_assurance:   { type: Date, required: true },
   vignette:         { type: Date, required: true },
 
+  photo:           { type: String },
+  description:     { type: String, trim: true },
+  cityRestriction: { type: Boolean, default: false },
+  allowedCities:   { type: [String], default: [] },
+
   // Health snapshot (updated by Telemetry service)
   healthStatus: {
     type: String,
@@ -21,6 +26,9 @@ const CarSchema = new mongoose.Schema({
     lng: { type: Number }
   },
   lastKnownOdometer: { type: Number },
+
+  // Device link (one-to-one with Device service)
+  deviceId: { type: String, index: true, sparse: true, default: null },
 
   // Availability snapshot (updated by Booking service via S2S)
   availability: {

@@ -150,6 +150,53 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
+// ✅ GET USER HISTORY (bookings with car info + reclamation count)
+const BOOKING_SERVICE_URL     = process.env.BOOKING_SERVICE     || 'http://localhost:6003';
+const CAR_SERVICE_URL         = process.env.CAR_SERVICE         || 'http://localhost:6002';
+const RECLAMATION_SERVICE_URL = process.env.RECLAMATION_SERVICE || 'http://localhost:6001';
+
+const fetchFromService = async (url) => {
+  try {
+    const resp = await require('axios').get(url, { timeout: 4000 });
+    return resp.data;
+  } catch { return null; }
+};
+
+router.get('/:id/history', async (req, res, next) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return sendError(res, 400, 'INVALID_ID', 'Invalid user ID format');
+    }
+
+    const user = await User.findById(req.params.id, { password: 0 });
+    if (!user) return sendError(res, 404, 'USER_NOT_FOUND', 'User not found');
+
+    // Fetch bookings and reclamations in parallel
+    const [bookings, reclamations] = await Promise.all([
+      fetchFromService(`${BOOKING_SERVICE_URL}/bookings/user/${req.params.id}`),
+      fetchFromService(`${RECLAMATION_SERVICE_URL}/reclamations?userId=${req.params.id}`)
+    ]);
+
+    // Enrich bookings with car data
+    let enrichedBookings = [];
+    if (bookings && Array.isArray(bookings)) {
+      enrichedBookings = await Promise.all(bookings.map(async (b) => {
+        const car = b.carId ? await fetchFromService(`${CAR_SERVICE_URL}/cars/${b.carId}`) : null;
+        return { ...b, car };
+      }));
+    }
+
+    res.status(200).json({
+      user: user.toObject(),
+      bookings: enrichedBookings,
+      reclamationCount: Array.isArray(reclamations) ? reclamations.length : 0,
+      rentalCount: enrichedBookings.length
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // ✅ UPDATE USER
 router.put('/:id', validate(updateUserSchema), async (req, res, next) => {
   try {

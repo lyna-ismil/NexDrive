@@ -8,17 +8,28 @@ const { sendError } = require('../../shared/errorHandler');
 
 const router = express.Router();
 
-const USER_SERVICE_URL = process.env.USER_SERVICE || 'http://localhost:6004';
+const USER_SERVICE_URL    = process.env.USER_SERVICE    || 'http://localhost:6004';
+const CAR_SERVICE_URL     = process.env.CAR_SERVICE     || 'http://localhost:6002';
+const BOOKING_SERVICE_URL = process.env.BOOKING_SERVICE || 'http://localhost:6003';
+
+const fetchFromService = async (url) => {
+  try {
+    const resp = await axios.get(url, { timeout: 4000 });
+    return resp.data;
+  } catch { return null; }
+};
 
 // --- Validation Schemas ---
 const createReclamationSchema = Joi.object({
   userId:    Joi.string().hex().length(24).required(),
+  carId:     Joi.string().hex().length(24).optional().allow(null, ''),
   message:   Joi.string().required().min(5).max(2000),
   bookingId: Joi.string().hex().length(24).optional().allow(null, '')
 });
 
 const updateReclamationSchema = Joi.object({
-  message: Joi.string().min(5).max(2000).optional()
+  message:   Joi.string().min(5).max(2000).optional(),
+  adminNote: Joi.string().max(2000).optional().allow('')
 }).min(1);
 
 const assignSchema = Joi.object({
@@ -27,6 +38,10 @@ const assignSchema = Joi.object({
 
 const resolveSchema = Joi.object({
   status: Joi.string().valid('RESOLVED', 'REJECTED').required()
+});
+
+const noteSchema = Joi.object({
+  adminNote: Joi.string().max(2000).required().allow('')
 });
 
 // ✅ CREATE RECLAMATION
@@ -53,7 +68,7 @@ router.post('/', upload.single('image'), validate(createReclamationSchema), asyn
   }
 });
 
-// ✅ GET ALL RECLAMATIONS (with filters)
+// ✅ GET ALL RECLAMATIONS (with user + car enrichment)
 router.get('/', async (req, res, next) => {
   try {
     const filter = {};
@@ -63,14 +78,13 @@ router.get('/', async (req, res, next) => {
 
     const reclamations = await Reclamation.find(filter).sort({ createdAt: -1 });
 
-    // Enrich with user data
+    // Enrich with user + car data
     const enriched = await Promise.all(reclamations.map(async (r) => {
-      let user = null;
-      try {
-        const resp = await axios.get(`${USER_SERVICE_URL}/users/${r.userId}`, { timeout: 4000 });
-        user = resp.data;
-      } catch { /* user unavailable */ }
-      return { ...r.toObject(), user };
+      const [user, car] = await Promise.all([
+        fetchFromService(`${USER_SERVICE_URL}/users/${r.userId}`),
+        r.carId ? fetchFromService(`${CAR_SERVICE_URL}/cars/${r.carId}`) : null
+      ]);
+      return { ...r.toObject(), user, car };
     }));
 
     res.status(200).json(enriched);
@@ -79,30 +93,66 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-// ✅ GET RECLAMATION BY ID
+// ✅ GET RECLAMATION BY ID (full detail with user history + car info)
 router.get('/:id', async (req, res, next) => {
   try {
     const reclamation = await Reclamation.findById(req.params.id);
     if (!reclamation) return sendError(res, 404, 'RECLAMATION_NOT_FOUND', 'Reclamation not found');
 
-    let user = null;
-    try {
-      const resp = await axios.get(`${USER_SERVICE_URL}/users/${reclamation.userId}`, { timeout: 4000 });
-      user = resp.data;
-    } catch { /* user unavailable */ }
+    // Fetch user, car, user bookings, and user reclamation count in parallel
+    const [user, car, userBookings, userReclamations] = await Promise.all([
+      fetchFromService(`${USER_SERVICE_URL}/users/${reclamation.userId}`),
+      reclamation.carId ? fetchFromService(`${CAR_SERVICE_URL}/cars/${reclamation.carId}`) : null,
+      fetchFromService(`${BOOKING_SERVICE_URL}/bookings/user/${reclamation.userId}`),
+      Reclamation.countDocuments({ userId: reclamation.userId })
+    ]);
 
-    res.status(200).json({ ...reclamation.toObject(), user });
+    // Enrich bookings with car data
+    let enrichedBookings = [];
+    if (userBookings && Array.isArray(userBookings)) {
+      enrichedBookings = await Promise.all(userBookings.map(async (b) => {
+        const bookingCar = b.carId ? await fetchFromService(`${CAR_SERVICE_URL}/cars/${b.carId}`) : null;
+        return { ...b, car: bookingCar };
+      }));
+    }
+
+    res.status(200).json({
+      ...reclamation.toObject(),
+      user,
+      car,
+      userBookings: enrichedBookings,
+      userReclamationCount: userReclamations
+    });
   } catch (error) {
     next(error);
   }
 });
 
-// ✅ UPDATE MESSAGE
+// ✅ UPDATE MESSAGE / ADMIN NOTE
 router.put('/:id', validate(updateReclamationSchema), async (req, res, next) => {
+  try {
+    const updateFields = {};
+    if (req.body.message) updateFields.message = req.body.message;
+    if (req.body.adminNote !== undefined) updateFields.adminNote = req.body.adminNote;
+
+    const updated = await Reclamation.findByIdAndUpdate(
+      req.params.id,
+      updateFields,
+      { new: true, runValidators: true }
+    );
+    if (!updated) return sendError(res, 404, 'RECLAMATION_NOT_FOUND', 'Reclamation not found');
+    res.status(200).json(updated);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ✅ UPDATE ADMIN NOTE
+router.put('/:id/note', validate(noteSchema), async (req, res, next) => {
   try {
     const updated = await Reclamation.findByIdAndUpdate(
       req.params.id,
-      { message: req.body.message },
+      { adminNote: req.body.adminNote },
       { new: true, runValidators: true }
     );
     if (!updated) return sendError(res, 404, 'RECLAMATION_NOT_FOUND', 'Reclamation not found');

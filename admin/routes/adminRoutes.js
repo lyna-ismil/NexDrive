@@ -1,10 +1,15 @@
 const express = require('express');
 const Joi = require('joi');
+const bcrypt = require('bcryptjs');
+const path = require('path');
 const Admin = require('../models/admin');
 const { validate } = require('../../shared/validate');
 const { sendError } = require('../../shared/errorHandler');
 
 const router = express.Router();
+
+// Multer upload middleware for admin photos
+const upload = require('../../shared/upload')(path.join(__dirname, '../uploads'));
 
 // --- Validation Schemas ---
 const createAdminSchema = Joi.object({
@@ -17,11 +22,17 @@ const createAdminSchema = Joi.object({
 });
 
 const updateAdminSchema = Joi.object({
+  email:  Joi.string().email().optional(),
   phone:  Joi.string().optional(),
   name:   Joi.string().optional(),
   role:   Joi.string().valid('ADMIN', 'SUPER_ADMIN').optional(),
   status: Joi.string().valid('ACTIVE', 'SUSPENDED').optional()
 }).min(1);
+
+const passwordChangeSchema = Joi.object({
+  currentPassword: Joi.string().required(),
+  newPassword:     Joi.string().min(6).required()
+});
 
 // ✅ CREATE ADMIN
 router.post('/', validate(createAdminSchema), async (req, res, next) => {
@@ -87,6 +98,40 @@ router.put('/:id', validate(updateAdminSchema), async (req, res, next) => {
   }
 });
 
+// ✅ UPLOAD ADMIN PHOTO
+router.put('/:id/photo', upload.single('photo'), async (req, res, next) => {
+  try {
+    if (!req.file) return sendError(res, 400, 'NO_FILE', 'Photo file is required');
+
+    const admin = await Admin.findByIdAndUpdate(
+      req.params.id,
+      { photo: `/uploads/${req.file.filename}` },
+      { new: true, projection: { password: 0 } }
+    );
+    if (!admin) return sendError(res, 404, 'ADMIN_NOT_FOUND', 'Admin not found');
+    res.status(200).json(admin);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ✅ CHANGE PASSWORD
+router.put('/:id/password', validate(passwordChangeSchema), async (req, res, next) => {
+  try {
+    const admin = await Admin.findById(req.params.id).select('+password');
+    if (!admin) return sendError(res, 404, 'ADMIN_NOT_FOUND', 'Admin not found');
+
+    const isMatch = await bcrypt.compare(req.body.currentPassword, admin.password);
+    if (!isMatch) return sendError(res, 400, 'WRONG_PASSWORD', 'Current password is incorrect');
+
+    admin.password = req.body.newPassword;
+    await admin.save(); // pre-save hook hashes the password
+    res.status(200).json({ message: 'Password changed successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // ✅ DELETE ADMIN
 router.delete('/:id', async (req, res, next) => {
   try {
@@ -99,3 +144,4 @@ router.delete('/:id', async (req, res, next) => {
 });
 
 module.exports = router;
+

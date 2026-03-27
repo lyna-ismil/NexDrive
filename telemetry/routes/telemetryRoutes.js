@@ -156,4 +156,41 @@ router.get('/cars/:carId/range',
   }
 );
 
+// ────────────────────────────────────────────────────────────
+// GET /telemetry/latest-all — Latest telemetry for ALL cars
+// Returns enriched data with car info from Vehicle Service.
+// ────────────────────────────────────────────────────────────
+const CAR_SERVICE_URL = process.env.CAR_SERVICE || 'http://localhost:6002';
+const axios = require('axios');
+
+const fetchCarInfo = async (carId) => {
+  try {
+    const resp = await axios.get(`${CAR_SERVICE_URL}/cars/${carId}`, { timeout: 4000 });
+    return resp.data;
+  } catch { return null; }
+};
+
+router.get('/latest-all',
+  queryLimiter,
+  verifyGatewayOrigin, attachGatewayIdentity, requireRole('ADMIN', 'SUPER_ADMIN'),
+  async (req, res, next) => {
+    try {
+      const snapshots = await CarTelemetryLatest.find({}).lean();
+
+      // Enrich each snapshot with car info in parallel
+      const enriched = await Promise.all(snapshots.map(async (s) => {
+        const car = await fetchCarInfo(s.carId);
+        return {
+          ...s,
+          car: car ? { _id: car._id, marque: car.marque, matricule: car.matricule, availability: car.availability } : null
+        };
+      }));
+
+      res.status(200).json(enriched);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 module.exports = router;

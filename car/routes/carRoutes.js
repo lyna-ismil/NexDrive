@@ -1,11 +1,25 @@
 const express = require('express');
 const Joi = require('joi');
+const path = require('path');
+const axios = require('axios');
 const Car = require('../models/car');
 const { validate } = require('../../shared/validate');
 const { sendError } = require('../../shared/errorHandler');
 const { verifyInternalService } = require('../../shared/authMiddleware');
 
 const router = express.Router();
+
+const DEVICE_SERVICE_URL = process.env.DEVICE_SERVICE || 'http://localhost:6006';
+
+const fetchFromService = async (url) => {
+  try {
+    const resp = await axios.get(url, { timeout: 4000 });
+    return resp.data;
+  } catch { return null; }
+};
+
+// Multer upload middleware for car photos
+const upload = require('../../shared/upload')(path.join(__dirname, '../uploads'));
 
 // --- Validation Schemas ---
 const createCarSchema = Joi.object({
@@ -15,16 +29,31 @@ const createCarSchema = Joi.object({
   visite_technique: Joi.date().required(),
   date_assurance:   Joi.date().required(),
   vignette:         Joi.date().required(),
-  healthStatus:     Joi.string().valid('OK', 'WARN', 'CRITICAL').optional()
+  healthStatus:     Joi.string().valid('OK', 'WARN', 'CRITICAL').optional(),
+  description:      Joi.string().max(2000).optional().allow(''),
+  cityRestriction:  Joi.boolean().optional(),
+  allowedCities:    Joi.alternatives().try(
+    Joi.array().items(Joi.string()),
+    Joi.string()
+  ).optional(),
+  deviceId:         Joi.string().optional().allow(null, '')
 });
 
 const updateCarSchema = Joi.object({
+  matricule:        Joi.string().optional(),
   marque:           Joi.string().optional(),
   location:         Joi.string().optional(),
   visite_technique: Joi.date().optional(),
   date_assurance:   Joi.date().optional(),
   vignette:         Joi.date().optional(),
-  healthStatus:     Joi.string().valid('OK', 'WARN', 'CRITICAL').optional()
+  healthStatus:     Joi.string().valid('OK', 'WARN', 'CRITICAL').optional(),
+  description:      Joi.string().max(2000).optional().allow(''),
+  cityRestriction:  Joi.boolean().optional(),
+  allowedCities:    Joi.alternatives().try(
+    Joi.array().items(Joi.string()),
+    Joi.string()
+  ).optional(),
+  deviceId:         Joi.string().optional().allow(null, '')
 }).min(1);
 
 const healthPatchSchema = Joi.object({
@@ -36,13 +65,57 @@ const healthPatchSchema = Joi.object({
   lastKnownOdometer: Joi.number().min(0).optional()
 });
 
+// Helper: parse allowedCities from form data (may come as comma-separated string or JSON string)
+function parseAllowedCities(body) {
+  if (!body.allowedCities) return [];
+  if (Array.isArray(body.allowedCities)) return body.allowedCities;
+  try {
+    const parsed = JSON.parse(body.allowedCities);
+    if (Array.isArray(parsed)) return parsed;
+  } catch { /* not JSON */ }
+  // Comma-separated fallback
+  return body.allowedCities.split(',').map(c => c.trim()).filter(Boolean);
+}
+
+// Helper: parse boolean from form data
+function parseBool(val) {
+  if (val === true || val === 'true' || val === '1') return true;
+  if (val === false || val === 'false' || val === '0') return false;
+  return undefined;
+}
+
 // ✅ CREATE CAR
-router.post('/', validate(createCarSchema), async (req, res, next) => {
+router.post('/', upload.single('photo'), async (req, res, next) => {
   try {
     const existing = await Car.findOne({ matricule: req.body.matricule });
     if (existing) return sendError(res, 409, 'DUPLICATE_MATRICULE', 'A car with this matricule already exists');
 
-    const car = new Car(req.body);
+    const carData = { ...req.body };
+
+    // Handle photo upload
+    if (req.file) {
+      carData.photo = `/uploads/${req.file.filename}`;
+    }
+
+    // Parse form-data specific fields
+    if (carData.cityRestriction !== undefined) {
+      carData.cityRestriction = parseBool(carData.cityRestriction);
+    }
+    if (carData.allowedCities !== undefined) {
+      carData.allowedCities = parseAllowedCities(carData);
+    }
+
+    // Validate deviceId uniqueness (one-to-one)
+    if (carData.deviceId) {
+      const alreadyLinked = await Car.findOne({ deviceId: carData.deviceId });
+      if (alreadyLinked) {
+        return sendError(res, 400, 'DEVICE_ALREADY_LINKED', 'Device already linked to another vehicle');
+      }
+    } else {
+      carData.deviceId = null;
+    }
+
+    const car = new Car(carData);
     await car.save();
     res.status(201).json(car);
   } catch (error) {
@@ -75,10 +148,37 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-// ✅ UPDATE CAR
-router.put('/:id', validate(updateCarSchema), async (req, res, next) => {
+// ✅ UPDATE CAR (with photo upload support)
+router.put('/:id', upload.single('photo'), async (req, res, next) => {
   try {
-    const car = await Car.findByIdAndUpdate(req.params.id, req.body, {
+    const updateData = { ...req.body };
+
+    // Handle photo upload
+    if (req.file) {
+      updateData.photo = `/uploads/${req.file.filename}`;
+    }
+
+    // Parse form-data specific fields
+    if (updateData.cityRestriction !== undefined) {
+      updateData.cityRestriction = parseBool(updateData.cityRestriction);
+    }
+    if (updateData.allowedCities !== undefined) {
+      updateData.allowedCities = parseAllowedCities(updateData);
+    }
+
+    // Validate deviceId uniqueness (one-to-one)
+    if (updateData.deviceId !== undefined) {
+      if (updateData.deviceId) {
+        const alreadyLinked = await Car.findOne({ deviceId: updateData.deviceId, _id: { $ne: req.params.id } });
+        if (alreadyLinked) {
+          return sendError(res, 400, 'DEVICE_ALREADY_LINKED', 'Device already linked to another vehicle');
+        }
+      } else {
+        updateData.deviceId = null;
+      }
+    }
+
+    const car = await Car.findByIdAndUpdate(req.params.id, updateData, {
       new: true,
       runValidators: true
     });
@@ -133,6 +233,24 @@ router.patch('/:id/availability',
     }
   }
 );
+
+// ✅ GET CAR DEVICE INFO (fetched from Device Service via HTTP)
+router.get('/:id/device', async (req, res, next) => {
+  try {
+    const car = await Car.findById(req.params.id);
+    if (!car) return sendError(res, 404, 'CAR_NOT_FOUND', 'Car not found');
+
+    if (!car.deviceId) {
+      return res.status(200).json({ device: null, message: 'No device linked to this car' });
+    }
+
+    // Fetch device info from Device Service
+    const device = await fetchFromService(`${DEVICE_SERVICE_URL}/devices?carId=${car.deviceId}`);
+    res.status(200).json({ device: device || null });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // ✅ DELETE CAR
 router.delete('/:id', async (req, res, next) => {
