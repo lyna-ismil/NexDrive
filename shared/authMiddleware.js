@@ -52,7 +52,7 @@ const verifyToken = (req, res, next) => {
 const requireRole = (...allowedRoles) => {
   return (req, res, next) => {
     if (!req.user || !req.user.role) {
-      return res.status(403).json({
+      return res.status(401).json({
         error: { code: 'AUTH_ROLE_MISSING', message: 'User role not found in token' }
       });
     }

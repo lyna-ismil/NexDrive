@@ -198,6 +198,45 @@ router.get('/user/:userId', async (req, res, next) => {
 });
 
 // ────────────────────────────────────────────────────────────
+// GET /notifications/recent — Get recent global notifications enriched with user
+// ────────────────────────────────────────────────────────────
+const axios = require('axios');
+const USER_SERVICE_URL = process.env.USER_SERVICE || 'http://localhost:6001';
+
+const fetchUserInfo = async (userId) => {
+  try {
+    const resp = await axios.get(`${USER_SERVICE_URL}/users/${userId}`, { timeout: 4000 });
+    return resp.data;
+  } catch { return null; }
+};
+
+router.get('/recent', verifyGatewayOrigin, attachGatewayIdentity, requireRole('ADMIN', 'SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const notifications = await Notification.find({})
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .lean();
+
+    const enriched = await Promise.all(notifications.map(async (n) => {
+      let userName = 'Unknown User';
+      let userEmail = '';
+      if (n.userId) {
+        const user = await fetchUserInfo(n.userId);
+        if (user) {
+          userName = user.fullName || user.firstName + ' ' + user.lastName;
+          userEmail = user.email || '';
+        }
+      }
+      return { ...n, user: { name: userName, email: userEmail } };
+    }));
+
+    res.status(200).json(enriched);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ────────────────────────────────────────────────────────────
 // PATCH /notifications/:id/read — Mark as read
 // ────────────────────────────────────────────────────────────
 router.patch('/:id/read', async (req, res, next) => {

@@ -60,7 +60,7 @@ const services = {
 };
 
 // Routes that use device auth instead of user JWT
-const DEVICE_AUTH_ROUTES = new Set(['/telemetry']);
+const DEVICE_AUTH_ROUTES = new Set([]);
 
 // ── Rate Limiting ──────────────────────────────────────────
 const limiter = rateLimit({
@@ -140,9 +140,22 @@ const verifyDatabaseConnections = async () => {
 };
 
 // ── Proxy Setup (with identity headers + correlation ID) ───
+// ✅ Static Proxy for /uploads directly to the User Service
+app.use('/uploads', (req, res, next) => {
+  createProxyMiddleware({
+    target: services['/users'].url,
+    changeOrigin: true,
+    pathRewrite: (path) => path, // keep /uploads prefix
+    onError: (err, req, res) => {
+      console.error(`❌ Proxy Error on /uploads: ${err.message}`);
+      res.status(502).json({ error: { code: 'SERVICE_UNAVAILABLE', message: `Service /uploads is unavailable` } });
+    }
+  })(req, res, next);
+});
+
 Object.keys(services).forEach(route => {
-  // For device-authenticated routes, skip user JWT validation
-  const middlewares = DEVICE_AUTH_ROUTES.has(route) ? [] : [optionalJwtAuth];
+  // Always try to decode user JWT to forward identity headers if present.
+  const middlewares = [optionalJwtAuth];
 
   app.use(route, ...middlewares, (req, res, next) => {
     createProxyMiddleware({

@@ -2,7 +2,7 @@ const express = require('express');
 const Joi = require('joi');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
-const User = require('../models/user');
+const User = require('../models/User');
 const upload = require('../middleware/upload');
 const { validate } = require('../../shared/validate');
 const { sendError } = require('../../shared/errorHandler');
@@ -218,6 +218,41 @@ router.delete('/:id', async (req, res, next) => {
     const deleted = await User.findByIdAndDelete(req.params.id);
     if (!deleted) return sendError(res, 404, 'USER_NOT_FOUND', 'User not found');
     res.status(200).json({ message: 'User deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ✅ UPLOAD USER PHOTO
+router.post('/:id/photo', upload.single('photo'), async (req, res, next) => {
+  try {
+    if (!req.file) return sendError(res, 400, 'NO_FILE', 'Photo file is required');
+
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { profilePhoto: `/uploads/${req.file.filename}` },
+      { new: true, projection: { password: 0 } }
+    );
+    if (!user) return sendError(res, 404, 'USER_NOT_FOUND', 'User not found');
+    res.status(200).json(user);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ✅ ADD ADMIN NOTE TO USER
+router.post('/:id/notes', async (req, res, next) => {
+  try {
+    const { text, createdBy } = req.body;
+    if (!text) return sendError(res, 400, 'MISSING_TEXT', 'Note text is required');
+
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { $push: { notes: { text, createdBy: createdBy || 'Admin' } } },
+      { new: true, projection: { password: 0 } }
+    );
+    if (!user) return sendError(res, 404, 'USER_NOT_FOUND', 'User not found');
+    res.status(200).json(user);
   } catch (error) {
     next(error);
   }

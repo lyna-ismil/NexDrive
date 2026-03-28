@@ -8,6 +8,7 @@ const UserSchema = new mongoose.Schema({
   phone:    { type: String, required: true, trim: true },
   cinImageUrl:     { type: String, required: true, trim: true },
   licenseImageUrl: { type: String, required: true, trim: true },
+  profilePhoto:    { type: String, trim: true, default: null },
   facture:            { type: Number, default: 0 },
   nbr_fois_allocation: { type: Number, default: 0 },
   blacklist: { type: Boolean, default: false },
@@ -16,7 +17,12 @@ const UserSchema = new mongoose.Schema({
     enum: ['ACTIVE', 'SUSPENDED'],
     default: 'ACTIVE',
     index: true
-  }
+  },
+  notes: [{
+    text: String,
+    createdBy: String, // admin email or ID
+    createdAt: { type: Date, default: Date.now }
+  }]
 }, { timestamps: true });
 
 // Hash password before saving
