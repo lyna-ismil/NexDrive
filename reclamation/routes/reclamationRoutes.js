@@ -24,12 +24,16 @@ const createReclamationSchema = Joi.object({
   userId:    Joi.string().hex().length(24).required(),
   carId:     Joi.string().hex().length(24).optional().allow(null, ''),
   message:   Joi.string().required().min(5).max(2000),
-  bookingId: Joi.string().hex().length(24).optional().allow(null, '')
+  bookingId: Joi.string().hex().length(24).optional().allow(null, ''),
+  priority:  Joi.string().valid('LOW', 'MEDIUM', 'HIGH').optional()
 });
 
 const updateReclamationSchema = Joi.object({
   message:   Joi.string().min(5).max(2000).optional(),
-  adminNote: Joi.string().max(2000).optional().allow('')
+  adminNote: Joi.string().max(2000).optional().allow(''),
+  status:    Joi.string().valid('OPEN', 'IN_PROGRESS', 'RESOLVED', 'REJECTED', 'CLOSED').optional(),
+  assignedAdminId: Joi.string().hex().length(24).optional().allow(''),
+  priority:  Joi.string().valid('LOW', 'MEDIUM', 'HIGH').optional()
 }).min(1);
 
 const assignSchema = Joi.object({
@@ -37,7 +41,7 @@ const assignSchema = Joi.object({
 });
 
 const resolveSchema = Joi.object({
-  status: Joi.string().valid('RESOLVED', 'REJECTED').required()
+  status: Joi.string().valid('OPEN', 'IN_PROGRESS', 'RESOLVED', 'REJECTED', 'CLOSED').required()
 });
 
 const noteSchema = Joi.object({
@@ -128,12 +132,16 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-// ✅ UPDATE MESSAGE / ADMIN NOTE
-router.put('/:id', validate(updateReclamationSchema), async (req, res, next) => {
+// ✅ UPDATE RECLAMATION
+router.put('/:id', upload.single('image'), validate(updateReclamationSchema), async (req, res, next) => {
   try {
     const updateFields = {};
     if (req.body.message) updateFields.message = req.body.message;
     if (req.body.adminNote !== undefined) updateFields.adminNote = req.body.adminNote;
+    if (req.body.status) updateFields.status = req.body.status;
+    if (req.body.assignedAdminId) updateFields.assignedAdminId = req.body.assignedAdminId;
+    if (req.body.priority) updateFields.priority = req.body.priority;
+    if (req.file) updateFields.image = req.file.filename;
 
     const updated = await Reclamation.findByIdAndUpdate(
       req.params.id,
@@ -177,8 +185,8 @@ router.put('/:id/assign', validate(assignSchema), async (req, res, next) => {
   }
 });
 
-// ✅ RESOLVE / REJECT
-router.put('/:id/resolve', validate(resolveSchema), async (req, res, next) => {
+// ✅ UPDATE STATUS
+router.put('/:id/status', validate(resolveSchema), async (req, res, next) => {
   try {
     const updated = await Reclamation.findByIdAndUpdate(
       req.params.id,
@@ -186,7 +194,7 @@ router.put('/:id/resolve', validate(resolveSchema), async (req, res, next) => {
       { new: true, runValidators: true }
     );
     if (!updated) return sendError(res, 404, 'RECLAMATION_NOT_FOUND', 'Reclamation not found');
-    res.status(200).json({ message: `Reclamation ${req.body.status.toLowerCase()}`, reclamation: updated });
+    res.status(200).json({ message: `Reclamation status updated to ${req.body.status}`, reclamation: updated });
   } catch (error) {
     next(error);
   }

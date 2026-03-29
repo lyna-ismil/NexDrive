@@ -212,7 +212,7 @@ router.patch('/:id/health', validate(healthPatchSchema), async (req, res, next) 
 
 // ✅ PATCH AVAILABILITY (called by Booking service via S2S)
 const availabilitySchema = Joi.object({
-  status:    Joi.string().valid('AVAILABLE', 'RESERVED', 'IN_USE').required(),
+  status:    Joi.string().valid('AVAILABLE', 'RESERVED', 'IN_USE', 'MAINTENANCE').required(),
   bookingId: Joi.string().hex().length(24).optional().allow(null, '')
 });
 
@@ -233,6 +233,28 @@ router.patch('/:id/availability',
     }
   }
 );
+
+// ✅ PATCH STATUS (Admin UI override)
+const adminStatusSchema = Joi.object({
+  status: Joi.string().valid('available', 'rented', 'maintenance', 'AVAILABLE', 'IN_USE', 'MAINTENANCE').required()
+});
+
+router.patch('/:id/status', validate(adminStatusSchema), async (req, res, next) => {
+  try {
+    let newStatus = req.body.status.toUpperCase();
+    if (newStatus === 'RENTED') newStatus = 'IN_USE';
+
+    const car = await Car.findByIdAndUpdate(
+      req.params.id,
+      { 'availability.status': newStatus },
+      { new: true, runValidators: true }
+    );
+    if (!car) return sendError(res, 404, 'CAR_NOT_FOUND', 'Car not found');
+    res.status(200).json(car);
+  } catch (error) {
+    next(error);
+  }
+});
 
 // ✅ GET CAR DEVICE INFO (fetched from Device Service via HTTP)
 router.get('/:id/device', async (req, res, next) => {

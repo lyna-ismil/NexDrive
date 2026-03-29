@@ -7,7 +7,7 @@ const ReclamationSchema = new mongoose.Schema({
   image:   { type: String, trim: true },
   status: {
     type: String,
-    enum: ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'],
+    enum: ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'REJECTED', 'CLOSED'],
     default: 'OPEN',
     index: true
   },

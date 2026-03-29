@@ -28,7 +28,8 @@ const updateUserSchema = Joi.object({
   facture:   Joi.number().optional(),
   nbr_fois_allocation: Joi.number().optional(),
   blacklist: Joi.boolean().optional(),
-  status:    Joi.string().valid('ACTIVE', 'SUSPENDED').optional()
+  status:    Joi.string().valid('ACTIVE', 'SUSPENDED').optional(),
+  role:      Joi.string().valid('USER', 'ADMIN').optional()
 }).min(1);
 
 const createUserSchema = Joi.object({
@@ -198,9 +199,19 @@ router.get('/:id/history', async (req, res, next) => {
 });
 
 // ✅ UPDATE USER
-router.put('/:id', validate(updateUserSchema), async (req, res, next) => {
+router.put('/:id', upload.single('photo'), async (req, res, next) => {
   try {
-    const updated = await User.findByIdAndUpdate(req.params.id, req.body, {
+    if (req.body.blacklist !== undefined) req.body.blacklist = req.body.blacklist === 'true';
+    if (req.body.facture !== undefined) req.body.facture = Number(req.body.facture);
+    if (req.body.nbr_fois_allocation !== undefined) req.body.nbr_fois_allocation = Number(req.body.nbr_fois_allocation);
+
+    const { error } = updateUserSchema.validate(req.body);
+    if (error) return sendError(res, 400, 'VALIDATION_ERROR', error.details[0].message);
+
+    const updateFields = { ...req.body };
+    if (req.file) updateFields.profilePhoto = `/uploads/${req.file.filename}`;
+
+    const updated = await User.findByIdAndUpdate(req.params.id, updateFields, {
       new: true,
       runValidators: true,
       projection: { password: 0 }

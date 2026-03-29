@@ -205,7 +205,12 @@ router.get('/car/:carId', async (req, res, next) => {
 });
 
 // ✅ UPDATE BOOKING
-router.put('/:id', upload.single('image'), validate(updateBookingSchema), async (req, res, next) => {
+router.put('/:id', upload.single('image'), (req, res, next) => {
+  if (typeof req.body.payment === 'string') {
+    try { req.body.payment = JSON.parse(req.body.payment); } catch (e) {}
+  }
+  next();
+}, validate(updateBookingSchema), async (req, res, next) => {
   try {
     const updateFields = { ...req.body };
     if (req.file) updateFields.image = `/uploads/${req.file.filename}`;

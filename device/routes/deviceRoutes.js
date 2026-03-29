@@ -34,6 +34,12 @@ const authSchema = Joi.object({
   sharedSecret: Joi.string().required()
 });
 
+const updateDeviceSchema = Joi.object({
+  status: Joi.string().valid('ACTIVE', 'BLOCKED', 'RETIRED').optional(),
+  firmwareVersion: Joi.string().optional().allow(''),
+  carId: Joi.string().hex().length(24).optional().allow(null, '')
+}).min(1);
+
 // ────────────────────────────────────────────────────────────
 // POST /devices — Register a new device (admin only)
 // ────────────────────────────────────────────────────────────
@@ -129,6 +135,32 @@ router.get('/:id',
       const device = await Device.findById(req.params.id);
       if (!device) return sendError(res, 404, 'DEVICE_NOT_FOUND', 'Device not found');
       res.status(200).json(device.toSafeJSON());
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// ────────────────────────────────────────────────────────────
+// PUT /devices/:id — Update device info (admin only)
+// ────────────────────────────────────────────────────────────
+router.put('/:id',
+  verifyGatewayOrigin, attachGatewayIdentity, requireRole('ADMIN', 'SUPER_ADMIN'),
+  validate(updateDeviceSchema),
+  async (req, res, next) => {
+    try {
+      const updateFields = {};
+      if (req.body.status !== undefined) updateFields.status = req.body.status;
+      if (req.body.firmwareVersion !== undefined) updateFields.firmwareVersion = req.body.firmwareVersion;
+      if (req.body.carId !== undefined) updateFields.carId = req.body.carId;
+
+      const device = await Device.findByIdAndUpdate(
+        req.params.id,
+        updateFields,
+        { new: true, runValidators: true }
+      );
+      if (!device) return sendError(res, 404, 'DEVICE_NOT_FOUND', 'Device not found');
+      res.status(200).json({ message: 'Device updated', device: device.toSafeJSON() });
     } catch (error) {
       next(error);
     }
