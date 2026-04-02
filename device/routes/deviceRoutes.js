@@ -18,7 +18,8 @@ const registerSchema = Joi.object({
   serialNumber:    Joi.string().required().trim(),
   sharedSecret:    Joi.string().required().min(16),
   firmwareVersion: Joi.string().optional().allow(''),
-  carId:           Joi.string().hex().length(24).optional().allow(null, '')
+  carId:           Joi.string().hex().length(24).optional().allow(null, ''),
+  status:          Joi.string().valid('ACTIVE', 'BLOCKED', 'RETIRED').optional()
 });
 
 const pairSchema = Joi.object({
@@ -49,7 +50,7 @@ router.post('/',
   validate(registerSchema),
   async (req, res, next) => {
     try {
-      const { serialNumber, sharedSecret, firmwareVersion, carId } = req.body;
+      const { serialNumber, sharedSecret, firmwareVersion, carId, status } = req.body;
 
       // Check duplicate serialNumber
       const existing = await Device.findOne({ serialNumber });
@@ -65,6 +66,7 @@ router.post('/',
         serialNumber,
         firmwareVersion: firmwareVersion || null,
         carId: carId || null,
+        status: status || 'ACTIVE',
         auth: { sharedSecretHash }
       });
 

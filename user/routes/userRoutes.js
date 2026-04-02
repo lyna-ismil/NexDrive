@@ -24,7 +24,9 @@ const loginSchema = Joi.object({
 
 const updateUserSchema = Joi.object({
   fullName:  Joi.string().optional(),
+  email:     Joi.string().email().optional(),
   phone:     Joi.string().optional(),
+  password:  Joi.string().min(6).optional().allow(''),
   facture:   Joi.number().optional(),
   nbr_fois_allocation: Joi.number().optional(),
   blacklist: Joi.boolean().optional(),
@@ -37,10 +39,13 @@ const createUserSchema = Joi.object({
   password:        Joi.string().min(6).required(),
   fullName:        Joi.string().required(),
   phone:           Joi.string().required(),
-  cinImageUrl:     Joi.string().uri().required(),
-  licenseImageUrl: Joi.string().uri().required(),
-  role:            Joi.string().valid('USER').optional(),
-  status:          Joi.string().valid('ACTIVE', 'SUSPENDED').optional()
+  cinImageUrl:     Joi.string().uri().optional().allow('', null),
+  licenseImageUrl: Joi.string().uri().optional().allow('', null),
+  role:            Joi.string().valid('USER', 'ADMIN').optional(),
+  status:          Joi.string().valid('ACTIVE', 'SUSPENDED').optional(),
+  facture:         Joi.number().optional(),
+  nbr_fois_allocation: Joi.number().optional(),
+  blacklist:       Joi.boolean().optional()
 });
 
 // ✅ SIGNUP with CIN + License image upload
@@ -205,11 +210,22 @@ router.put('/:id', upload.single('photo'), async (req, res, next) => {
     if (req.body.facture !== undefined) req.body.facture = Number(req.body.facture);
     if (req.body.nbr_fois_allocation !== undefined) req.body.nbr_fois_allocation = Number(req.body.nbr_fois_allocation);
 
+    // Strip empty password before validation so it doesn't fail min(6)
+    if (req.body.password !== undefined && req.body.password.trim() === '') {
+      delete req.body.password;
+    }
+
     const { error } = updateUserSchema.validate(req.body);
     if (error) return sendError(res, 400, 'VALIDATION_ERROR', error.details[0].message);
 
     const updateFields = { ...req.body };
     if (req.file) updateFields.profilePhoto = `/uploads/${req.file.filename}`;
+
+    // Hash password if provided
+    if (updateFields.password) {
+      const salt = await bcrypt.genSalt(10);
+      updateFields.password = await bcrypt.hash(updateFields.password, salt);
+    }
 
     const updated = await User.findByIdAndUpdate(req.params.id, updateFields, {
       new: true,
