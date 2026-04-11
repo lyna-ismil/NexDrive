@@ -48,26 +48,17 @@ const createUserSchema = Joi.object({
   blacklist:       Joi.boolean().optional()
 });
 
-// ✅ SIGNUP with CIN + License image upload
-router.post('/signup', upload.fields([{ name: 'cin' }, { name: 'permis' }]), validate(signupSchema), async (req, res, next) => {
+// ✅ SIGNUP (JSON body — no file uploads)
+router.post('/signup', validate(signupSchema), async (req, res, next) => {
   try {
-    if (!req.files?.cin || !req.files?.permis) {
-      return sendError(res, 400, 'MISSING_IMAGES', 'CIN and License images are required');
-    }
-
     const existing = await User.findOne({ email: req.body.email });
     if (existing) return sendError(res, 409, 'USER_EXISTS', 'User already exists with this email');
-
-    const cinImageUrl     = `http://${req.hostname}:6004/uploads/${req.files.cin[0].filename}`;
-    const licenseImageUrl = `http://${req.hostname}:6004/uploads/${req.files.permis[0].filename}`;
 
     const newUser = new User({
       email:    req.body.email,
       password: req.body.password,
       fullName: req.body.fullName,
       phone:    req.body.phone,
-      cinImageUrl,
-      licenseImageUrl
     });
 
     await newUser.save();
@@ -260,6 +251,36 @@ router.post('/:id/photo', upload.single('photo'), async (req, res, next) => {
       { profilePhoto: `/uploads/${req.file.filename}` },
       { new: true, projection: { password: 0 } }
     );
+    if (!user) return sendError(res, 404, 'USER_NOT_FOUND', 'User not found');
+    res.status(200).json(user);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ✅ KYC DOCUMENT UPLOAD
+router.put('/:id/kyc', upload.fields([
+  { name: 'cinImage', maxCount: 1 },
+  { name: 'licenseImage', maxCount: 1 }
+]), async (req, res, next) => {
+  try {
+    const updateFields = {};
+
+    if (req.files?.cinImage?.[0]) {
+      updateFields.cinImageUrl = `/uploads/${req.files.cinImage[0].filename}`;
+    }
+    if (req.files?.licenseImage?.[0]) {
+      updateFields.licenseImageUrl = `/uploads/${req.files.licenseImage[0].filename}`;
+    }
+
+    if (Object.keys(updateFields).length === 0) {
+      return sendError(res, 400, 'NO_FILES', 'At least one document (cinImage or licenseImage) is required');
+    }
+
+    const user = await User.findByIdAndUpdate(req.params.id, updateFields, {
+      new: true,
+      projection: { password: 0 }
+    });
     if (!user) return sendError(res, 404, 'USER_NOT_FOUND', 'User not found');
     res.status(200).json(user);
   } catch (error) {

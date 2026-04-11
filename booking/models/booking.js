@@ -25,7 +25,9 @@ const BookingSchema = new mongoose.Schema({
   dropoffLocation: { type: String, trim: true },
   payment:     { type: paymentSchema, default: () => ({}) },
   contractUrl: { type: String, trim: true },
-  image:       { type: String, trim: true }
+  image:       { type: String, trim: true },
+  current_Key_car: { type: String, default: null },
+  keyExpiresAt:    { type: Date, default: null }
 }, { timestamps: true });
 
 // Validate endDate > startDate

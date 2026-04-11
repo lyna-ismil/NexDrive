@@ -130,7 +130,41 @@ router.get('/', async (req, res, next) => {
     if (req.query.healthStatus) filter.healthStatus = req.query.healthStatus;
     if (req.query.location)     filter.location     = req.query.location;
 
+    // Device-paired filter for Flutter map
+    if (req.query.paired === 'true') {
+      filter['availability.status'] = 'AVAILABLE';
+      const devices = await fetchFromService(`${DEVICE_SERVICE_URL}/devices?status=ACTIVE`);
+      if (devices && Array.isArray(devices)) {
+        const pairedCarIds = devices
+          .filter(d => d.carId)
+          .map(d => d.carId);
+        if (pairedCarIds.length > 0) {
+          filter._id = { $in: pairedCarIds.map(id => require('mongoose').Types.ObjectId(id)) };
+        } else {
+          return res.status(200).json([]); // No paired cars
+        }
+      } else {
+        return res.status(200).json([]); // Device service unavailable
+      }
+    }
+
     const cars = await Car.find(filter);
+
+    // If paired filter, enrich each car with its deviceId from the device lookup
+    if (req.query.paired === 'true') {
+      const devices = await fetchFromService(`${DEVICE_SERVICE_URL}/devices?status=ACTIVE`);
+      const deviceMap = {};
+      if (devices && Array.isArray(devices)) {
+        devices.forEach(d => { if (d.carId) deviceMap[d.carId] = d.deviceId; });
+      }
+      const enriched = cars.map(c => {
+        const obj = c.toObject();
+        obj.deviceId = obj.deviceId || deviceMap[obj._id.toString()] || null;
+        return obj;
+      });
+      return res.status(200).json(enriched);
+    }
+
     res.status(200).json(cars);
   } catch (error) {
     next(error);

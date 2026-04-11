@@ -175,6 +175,32 @@ router.post('/process',
 );
 
 // ────────────────────────────────────────────────────────────
+// GET /notifications?userId=:id&status=unread (Flutter-friendly)
+// ────────────────────────────────────────────────────────────
+router.get('/', async (req, res, next) => {
+  try {
+    const { userId, status, limit = 50, skip = 0 } = req.query;
+    const filter = {};
+    if (userId) filter.userId = userId;
+    if (status === 'unread') {
+      filter.status = { $nin: ['READ'] };
+    } else if (status) {
+      filter.status = status.toUpperCase();
+    }
+
+    const notifications = await Notification.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(parseInt(skip))
+      .limit(parseInt(limit));
+
+    const total = await Notification.countDocuments(filter);
+    res.status(200).json({ notifications, total });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ────────────────────────────────────────────────────────────
 // GET /notifications/user/:userId — Get notifications (paginated)
 // ────────────────────────────────────────────────────────────
 router.get('/user/:userId', async (req, res, next) => {
@@ -240,6 +266,23 @@ router.get('/recent', verifyGatewayOrigin, attachGatewayIdentity, requireRole('A
 // PATCH /notifications/:id/read — Mark as read
 // ────────────────────────────────────────────────────────────
 router.patch('/:id/read', async (req, res, next) => {
+  try {
+    const notification = await Notification.findByIdAndUpdate(
+      req.params.id,
+      { status: 'READ', readAt: new Date() },
+      { new: true }
+    );
+    if (!notification) return sendError(res, 404, 'NOTIFICATION_NOT_FOUND', 'Notification not found');
+    res.status(200).json(notification);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// PUT /notifications/:id/read (alias for PATCH, Flutter compat)
+// ────────────────────────────────────────────────────────────
+router.put('/:id/read', async (req, res, next) => {
   try {
     const notification = await Notification.findByIdAndUpdate(
       req.params.id,

@@ -161,6 +161,60 @@ router.get('/', async (req, res, next) => {
   }
 });
 
+// ✅ GENERATE NFC KEY (server-side)
+router.post('/:id/generate-key', async (req, res, next) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) return sendError(res, 404, 'BOOKING_NOT_FOUND', 'Booking not found');
+
+    // Verify booking status
+    if (booking.status !== 'CONFIRMED') {
+      return sendError(res, 403, 'INVALID_STATUS',
+        'Key can only be generated for CONFIRMED bookings');
+    }
+
+    // Verify payment
+    if (!booking.payment || booking.payment.status !== 'PAID') {
+      return sendError(res, 403, 'UNPAID',
+        'Key can only be generated after payment is completed');
+    }
+
+    // Verify pickup date (cannot generate before pickup date)
+    if (new Date() < new Date(booking.startDate)) {
+      return sendError(res, 403, 'TOO_EARLY',
+        'Key cannot be generated before the pickup date');
+    }
+
+    // Generate cryptographically secure key
+    const nfcKey = crypto.randomBytes(32).toString('base64url');
+    const expiresAt = new Date(booking.endDate);
+
+    booking.current_Key_car = nfcKey;
+    booking.keyExpiresAt = expiresAt;
+    await booking.save();
+
+    res.status(200).json({ nfcKey, expiresAt: expiresAt.toISOString() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ✅ GET CONTRACT URL
+router.get('/:id/contract', async (req, res, next) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) return sendError(res, 404, 'BOOKING_NOT_FOUND', 'Booking not found');
+
+    if (!booking.contractUrl) {
+      return sendError(res, 404, 'NO_CONTRACT', 'No contract available for this booking');
+    }
+
+    res.status(200).json({ contractUrl: booking.contractUrl });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // ✅ GET BOOKING BY ID
 router.get('/:id', async (req, res, next) => {
   try {
@@ -189,6 +243,29 @@ router.get('/user/:userId', async (req, res, next) => {
     }));
 
     res.status(200).json(enriched);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ✅ GET MY BOOKINGS (Split active/history)
+router.get('/my-bookings', async (req, res, next) => {
+  try {
+    const userId = req.user?.id || req.headers['x-user-id'] || req.query.userId;
+    if (!userId) return sendError(res, 400, 'MISSING_USER_ID', 'User ID is required');
+
+    const bookings = await Booking.find({ userId }).sort({ createdAt: -1 });
+
+    const enriched = await Promise.all(bookings.map(async (b) => {
+      const car = await fetchFromService(`${CAR_SERVICE_URL}/cars/${b.carId}`);
+      return { ...b.toObject(), car: car || null };
+    }));
+
+    const activeStatuses = ['PENDING', 'CONFIRMED', 'ACTIVE'];
+    const active = enriched.filter(b => activeStatuses.includes(b.status));
+    const history = enriched.filter(b => !activeStatuses.includes(b.status));
+
+    res.status(200).json({ active, history });
   } catch (error) {
     next(error);
   }
