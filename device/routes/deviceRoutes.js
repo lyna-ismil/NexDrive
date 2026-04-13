@@ -2,6 +2,7 @@ const express = require('express');
 const Joi = require('joi');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const axios = require('axios');
 const Device = require('../models/device');
 const { validate } = require('../../shared/validate');
 const { sendError } = require('../../shared/errorHandler');
@@ -12,6 +13,7 @@ const router = express.Router();
 
 const DEVICE_JWT_SECRET = process.env.DEVICE_JWT_SECRET || process.env.JWT_SECRET || 'deviceSecretKey';
 const DEVICE_JWT_EXPIRATION = process.env.DEVICE_JWT_EXPIRATION || '1h';
+const CAR_SERVICE_URL = process.env.CAR_SERVICE || 'http://localhost:6002';
 
 // --- Validation Schemas ---
 const registerSchema = Joi.object({
@@ -96,10 +98,59 @@ router.post('/:id/pair',
         return sendError(res, 400, 'DEVICE_NOT_ACTIVE', `Cannot pair a ${device.status} device`);
       }
 
+      if (device.carId === req.body.carId) {
+        return res.status(200).json({ message: 'Device already paired with this car', device: device.toSafeJSON() });
+      }
+
+      const oldCarId = device.carId;
       device.carId = req.body.carId;
       await device.save();
 
+      // Unpair from old car if any
+      if (oldCarId && oldCarId !== req.body.carId) {
+        axios.put(`${CAR_SERVICE_URL}/cars/${oldCarId}`, 
+          { deviceId: null },
+          { headers: { 'x-internal-gateway-key': process.env.INTERNAL_GATEWAY_KEY || 'internal_secret_key' } }
+        ).catch(err => console.warn('Failed to unpair from old car:', err.message));
+      }
+
+      // Sync with new car
+      axios.put(`${CAR_SERVICE_URL}/cars/${req.body.carId}`, 
+        { deviceId: device._id.toString() },
+        { headers: { 'x-internal-gateway-key': process.env.INTERNAL_GATEWAY_KEY || 'internal_secret_key' } }
+      ).catch(err => console.warn('Failed to sync to car service:', err.message));
+
       res.status(200).json({ message: 'Device paired with car', device: device.toSafeJSON() });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// ────────────────────────────────────────────────────────────
+// POST /devices/:id/unpair — Unpair device from car (admin/internal)
+// ────────────────────────────────────────────────────────────
+router.post('/:id/unpair',
+  verifyGatewayOrigin, attachGatewayIdentity, requireRole('ADMIN', 'SUPER_ADMIN'),
+  async (req, res, next) => {
+    try {
+      const device = await Device.findById(req.params.id);
+      if (!device) return sendError(res, 404, 'DEVICE_NOT_FOUND', 'Device not found');
+
+      if (!device.carId) {
+        return res.status(200).json({ message: 'Device already unpaired', device: device.toSafeJSON() });
+      }
+
+      const oldCarId = device.carId;
+      device.carId = null;
+      await device.save();
+
+      axios.put(`${CAR_SERVICE_URL}/cars/${oldCarId}`, 
+        { deviceId: null },
+        { headers: { 'x-internal-gateway-key': process.env.INTERNAL_GATEWAY_KEY || 'internal_secret_key' } }
+      ).catch(err => console.warn('Failed to unpair from car service:', err.message));
+
+      res.status(200).json({ message: 'Device unpaired', device: device.toSafeJSON() });
     } catch (error) {
       next(error);
     }
@@ -205,6 +256,10 @@ router.post('/authenticate',
 
       if (device.status !== 'ACTIVE') {
         return sendError(res, 403, 'DEVICE_BLOCKED', `Device is ${device.status}`);
+      }
+
+      if (!device.carId) {
+        return sendError(res, 403, 'DEVICE_UNPAIRED', 'Device must be paired to a car to authenticate');
       }
 
       if (!device.auth?.sharedSecretHash) {

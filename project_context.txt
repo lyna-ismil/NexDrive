@@ -8791,6 +8791,14 @@ router.post('/', upload.single('photo'), async (req, res, next) => {
 
     const car = new Car(carData);
     await car.save();
+
+    if (car.deviceId) {
+      axios.post(`${DEVICE_SERVICE_URL}/devices/${car.deviceId}/pair`, 
+        { carId: car._id.toString() }, 
+        { headers: { 'x-internal-gateway-key': process.env.INTERNAL_GATEWAY_KEY || 'internal_secret_key' } }
+      ).catch(err => console.warn('Failed to sync to device service:', err.message));
+    }
+
     res.status(201).json(car);
   } catch (error) {
     next(error);
@@ -8807,37 +8815,10 @@ router.get('/', async (req, res, next) => {
     // Device-paired filter for Flutter map
     if (req.query.paired === 'true') {
       filter['availability.status'] = 'AVAILABLE';
-      const devices = await fetchFromService(`${DEVICE_SERVICE_URL}/devices?status=ACTIVE`);
-      if (devices && Array.isArray(devices)) {
-        const pairedCarIds = devices
-          .filter(d => d.carId)
-          .map(d => d.carId);
-        if (pairedCarIds.length > 0) {
-          filter._id = { $in: pairedCarIds.map(id => require('mongoose').Types.ObjectId(id)) };
-        } else {
-          return res.status(200).json([]); // No paired cars
-        }
-      } else {
-        return res.status(200).json([]); // Device service unavailable
-      }
+      filter.deviceId = { $exists: true, $ne: null };
     }
 
     const cars = await Car.find(filter);
-
-    // If paired filter, enrich each car with its deviceId from the device lookup
-    if (req.query.paired === 'true') {
-      const devices = await fetchFromService(`${DEVICE_SERVICE_URL}/devices?status=ACTIVE`);
-      const deviceMap = {};
-      if (devices && Array.isArray(devices)) {
-        devices.forEach(d => { if (d.carId) deviceMap[d.carId] = d.deviceId; });
-      }
-      const enriched = cars.map(c => {
-        const obj = c.toObject();
-        obj.deviceId = obj.deviceId || deviceMap[obj._id.toString()] || null;
-        return obj;
-      });
-      return res.status(200).json(enriched);
-    }
 
     res.status(200).json(cars);
   } catch (error) {
@@ -8886,11 +8867,31 @@ router.put('/:id', upload.single('photo'), async (req, res, next) => {
       }
     }
 
+    const oldCar = await Car.findById(req.params.id);
+    if (!oldCar) return sendError(res, 404, 'CAR_NOT_FOUND', 'Car not found');
+
     const car = await Car.findByIdAndUpdate(req.params.id, updateData, {
       new: true,
       runValidators: true
     });
-    if (!car) return sendError(res, 404, 'CAR_NOT_FOUND', 'Car not found');
+    
+    const oldDeviceId = oldCar.deviceId ? oldCar.deviceId.toString() : null;
+    const newDeviceId = car.deviceId ? car.deviceId.toString() : null;
+
+    if (oldDeviceId !== newDeviceId) {
+      if (oldDeviceId) {
+        axios.post(`${DEVICE_SERVICE_URL}/devices/${oldDeviceId}/unpair`, {}, 
+          { headers: { 'x-internal-gateway-key': process.env.INTERNAL_GATEWAY_KEY || 'internal_secret_key' } }
+        ).catch(err => console.warn('Failed to unpair from old device service:', err.message));
+      }
+      if (newDeviceId) {
+        axios.post(`${DEVICE_SERVICE_URL}/devices/${newDeviceId}/pair`, 
+          { carId: car._id.toString() }, 
+          { headers: { 'x-internal-gateway-key': process.env.INTERNAL_GATEWAY_KEY || 'internal_secret_key' } }
+        ).catch(err => console.warn('Failed to sync to new device service:', err.message));
+      }
+    }
+
     res.status(200).json(car);
   } catch (error) {
     next(error);
@@ -8898,7 +8899,7 @@ router.put('/:id', upload.single('photo'), async (req, res, next) => {
 });
 
 // ✅ PATCH HEALTH (called by Telemetry service)
-router.patch('/:id/health', validate(healthPatchSchema), async (req, res, next) => {
+router.patch('/:id/health', verifyInternalService, validate(healthPatchSchema), async (req, res, next) => {
   try {
     const update = {
       healthStatus:     req.body.healthStatus,
@@ -9275,6 +9276,7 @@ const express = require('express');
 const Joi = require('joi');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const axios = require('axios');
 const Device = require('../models/device');
 const { validate } = require('../../shared/validate');
 const { sendError } = require('../../shared/errorHandler');
@@ -9285,6 +9287,7 @@ const router = express.Router();
 
 const DEVICE_JWT_SECRET = process.env.DEVICE_JWT_SECRET || process.env.JWT_SECRET || 'deviceSecretKey';
 const DEVICE_JWT_EXPIRATION = process.env.DEVICE_JWT_EXPIRATION || '1h';
+const CAR_SERVICE_URL = process.env.CAR_SERVICE || 'http://localhost:6002';
 
 // --- Validation Schemas ---
 const registerSchema = Joi.object({
@@ -9369,10 +9372,59 @@ router.post('/:id/pair',
         return sendError(res, 400, 'DEVICE_NOT_ACTIVE', `Cannot pair a ${device.status} device`);
       }
 
+      if (device.carId === req.body.carId) {
+        return res.status(200).json({ message: 'Device already paired with this car', device: device.toSafeJSON() });
+      }
+
+      const oldCarId = device.carId;
       device.carId = req.body.carId;
       await device.save();
 
+      // Unpair from old car if any
+      if (oldCarId && oldCarId !== req.body.carId) {
+        axios.put(`${CAR_SERVICE_URL}/cars/${oldCarId}`, 
+          { deviceId: null },
+          { headers: { 'x-internal-gateway-key': process.env.INTERNAL_GATEWAY_KEY || 'internal_secret_key' } }
+        ).catch(err => console.warn('Failed to unpair from old car:', err.message));
+      }
+
+      // Sync with new car
+      axios.put(`${CAR_SERVICE_URL}/cars/${req.body.carId}`, 
+        { deviceId: device._id.toString() },
+        { headers: { 'x-internal-gateway-key': process.env.INTERNAL_GATEWAY_KEY || 'internal_secret_key' } }
+      ).catch(err => console.warn('Failed to sync to car service:', err.message));
+
       res.status(200).json({ message: 'Device paired with car', device: device.toSafeJSON() });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// ────────────────────────────────────────────────────────────
+// POST /devices/:id/unpair — Unpair device from car (admin/internal)
+// ────────────────────────────────────────────────────────────
+router.post('/:id/unpair',
+  verifyGatewayOrigin, attachGatewayIdentity, requireRole('ADMIN', 'SUPER_ADMIN'),
+  async (req, res, next) => {
+    try {
+      const device = await Device.findById(req.params.id);
+      if (!device) return sendError(res, 404, 'DEVICE_NOT_FOUND', 'Device not found');
+
+      if (!device.carId) {
+        return res.status(200).json({ message: 'Device already unpaired', device: device.toSafeJSON() });
+      }
+
+      const oldCarId = device.carId;
+      device.carId = null;
+      await device.save();
+
+      axios.put(`${CAR_SERVICE_URL}/cars/${oldCarId}`, 
+        { deviceId: null },
+        { headers: { 'x-internal-gateway-key': process.env.INTERNAL_GATEWAY_KEY || 'internal_secret_key' } }
+      ).catch(err => console.warn('Failed to unpair from car service:', err.message));
+
+      res.status(200).json({ message: 'Device unpaired', device: device.toSafeJSON() });
     } catch (error) {
       next(error);
     }
@@ -9478,6 +9530,10 @@ router.post('/authenticate',
 
       if (device.status !== 'ACTIVE') {
         return sendError(res, 403, 'DEVICE_BLOCKED', `Device is ${device.status}`);
+      }
+
+      if (!device.carId) {
+        return sendError(res, 403, 'DEVICE_UNPAIRED', 'Device must be paired to a car to authenticate');
       }
 
       if (!device.auth?.sharedSecretHash) {
@@ -15652,6 +15708,7 @@ module.exports = mongoose.model('TelemetryMessage', TelemetryMessageSchema);
 
 const express = require('express');
 const Joi = require('joi');
+const axios = require('axios');
 const TelemetryMessage = require('../models/telemetryMessage');
 const CarTelemetryLatest = require('../models/carTelemetryLatest');
 const { verifyDeviceToken } = require('../middleware/deviceAuth');
@@ -15663,6 +15720,9 @@ const { inc } = require('../../shared/metrics');
 const { verifyDevice } = require('../services/deviceClient');
 
 const router = express.Router();
+
+// --- Backend Services ---
+const CAR_SERVICE_URL = process.env.CAR_SERVICE || 'http://localhost:6002';
 
 // --- Timestamp bounds ---
 const MAX_FUTURE_MS = 5 * 60 * 1000;      // +5 minutes
@@ -15703,6 +15763,29 @@ const rangeQuerySchema = Joi.object({
   limit: Joi.number().integer().min(1).max(1000).default(200),
   skip:  Joi.number().integer().min(0).default(0)
 });
+
+// --- Utils -------------------------------------------------------------
+const pushHealthToCar = async (carId, payload) => {
+  let healthStatus = 'OK';
+  
+  if (payload.fuelLevel !== undefined && payload.fuelLevel < 20) {
+    healthStatus = 'CRITICAL';
+  } else if ((payload.dtcCodes && payload.dtcCodes.length > 0) || (payload.coolantTemp !== undefined && payload.coolantTemp > 100)) {
+    healthStatus = 'WARN';
+  }
+
+  const updateData = { healthStatus };
+  if (payload.gps) updateData.lastKnownLocation = payload.gps;
+  if (payload.odometer !== undefined) updateData.lastKnownOdometer = payload.odometer;
+
+  try {
+    await axios.patch(`${CAR_SERVICE_URL}/cars/${carId}/health`, updateData, {
+      headers: { 'x-internal-gateway-key': process.env.INTERNAL_GATEWAY_KEY || 'internal_secret_key' }
+    });
+  } catch (err) {
+    console.warn('Failed to update car health via S2S:', err.message);
+  }
+};
 
 // ────────────────────────────────────────────────────────────
 // POST /telemetry — Ingest telemetry (device-authenticated)
@@ -15749,6 +15832,9 @@ router.post('/',
         { carId: resolvedCarId, deviceId, ts, payload },
         { upsert: true, new: true, setDefaultsOnInsert: true }
       );
+
+      // Derive health and push to Car Service
+      await pushHealthToCar(resolvedCarId, payload);
 
       res.status(201).json({ acknowledged: true, id: message._id });
       inc('telemetry.ingest.success');
@@ -15812,9 +15898,6 @@ router.get('/cars/:carId/range',
 // GET /telemetry/latest-all — Latest telemetry for ALL cars
 // Returns enriched data with car info from Vehicle Service.
 // ────────────────────────────────────────────────────────────
-const CAR_SERVICE_URL = process.env.CAR_SERVICE || 'http://localhost:6002';
-const axios = require('axios');
-
 const fetchCarInfo = async (carId) => {
   try {
     const resp = await axios.get(`${CAR_SERVICE_URL}/cars/${carId}`, { timeout: 4000 });

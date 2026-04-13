@@ -1,5 +1,6 @@
 const express = require('express');
 const Joi = require('joi');
+const axios = require('axios');
 const TelemetryMessage = require('../models/telemetryMessage');
 const CarTelemetryLatest = require('../models/carTelemetryLatest');
 const { verifyDeviceToken } = require('../middleware/deviceAuth');
@@ -11,6 +12,9 @@ const { inc } = require('../../shared/metrics');
 const { verifyDevice } = require('../services/deviceClient');
 
 const router = express.Router();
+
+// --- Backend Services ---
+const CAR_SERVICE_URL = process.env.CAR_SERVICE || 'http://localhost:6002';
 
 // --- Timestamp bounds ---
 const MAX_FUTURE_MS = 5 * 60 * 1000;      // +5 minutes
@@ -51,6 +55,29 @@ const rangeQuerySchema = Joi.object({
   limit: Joi.number().integer().min(1).max(1000).default(200),
   skip:  Joi.number().integer().min(0).default(0)
 });
+
+// --- Utils -------------------------------------------------------------
+const pushHealthToCar = async (carId, payload) => {
+  let healthStatus = 'OK';
+  
+  if (payload.fuelLevel !== undefined && payload.fuelLevel < 20) {
+    healthStatus = 'CRITICAL';
+  } else if ((payload.dtcCodes && payload.dtcCodes.length > 0) || (payload.coolantTemp !== undefined && payload.coolantTemp > 100)) {
+    healthStatus = 'WARN';
+  }
+
+  const updateData = { healthStatus };
+  if (payload.gps) updateData.lastKnownLocation = payload.gps;
+  if (payload.odometer !== undefined) updateData.lastKnownOdometer = payload.odometer;
+
+  try {
+    await axios.patch(`${CAR_SERVICE_URL}/cars/${carId}/health`, updateData, {
+      headers: { 'x-internal-gateway-key': process.env.INTERNAL_GATEWAY_KEY || 'internal_secret_key' }
+    });
+  } catch (err) {
+    console.warn('Failed to update car health via S2S:', err.message);
+  }
+};
 
 // ────────────────────────────────────────────────────────────
 // POST /telemetry — Ingest telemetry (device-authenticated)
@@ -97,6 +124,9 @@ router.post('/',
         { carId: resolvedCarId, deviceId, ts, payload },
         { upsert: true, new: true, setDefaultsOnInsert: true }
       );
+
+      // Derive health and push to Car Service
+      await pushHealthToCar(resolvedCarId, payload);
 
       res.status(201).json({ acknowledged: true, id: message._id });
       inc('telemetry.ingest.success');
@@ -160,9 +190,6 @@ router.get('/cars/:carId/range',
 // GET /telemetry/latest-all — Latest telemetry for ALL cars
 // Returns enriched data with car info from Vehicle Service.
 // ────────────────────────────────────────────────────────────
-const CAR_SERVICE_URL = process.env.CAR_SERVICE || 'http://localhost:6002';
-const axios = require('axios');
-
 const fetchCarInfo = async (carId) => {
   try {
     const resp = await axios.get(`${CAR_SERVICE_URL}/cars/${carId}`, { timeout: 4000 });

@@ -117,6 +117,14 @@ router.post('/', upload.single('photo'), async (req, res, next) => {
 
     const car = new Car(carData);
     await car.save();
+
+    if (car.deviceId) {
+      axios.post(`${DEVICE_SERVICE_URL}/devices/${car.deviceId}/pair`, 
+        { carId: car._id.toString() }, 
+        { headers: { 'x-internal-gateway-key': process.env.INTERNAL_GATEWAY_KEY || 'internal_secret_key' } }
+      ).catch(err => console.warn('Failed to sync to device service:', err.message));
+    }
+
     res.status(201).json(car);
   } catch (error) {
     next(error);
@@ -133,37 +141,10 @@ router.get('/', async (req, res, next) => {
     // Device-paired filter for Flutter map
     if (req.query.paired === 'true') {
       filter['availability.status'] = 'AVAILABLE';
-      const devices = await fetchFromService(`${DEVICE_SERVICE_URL}/devices?status=ACTIVE`);
-      if (devices && Array.isArray(devices)) {
-        const pairedCarIds = devices
-          .filter(d => d.carId)
-          .map(d => d.carId);
-        if (pairedCarIds.length > 0) {
-          filter._id = { $in: pairedCarIds.map(id => require('mongoose').Types.ObjectId(id)) };
-        } else {
-          return res.status(200).json([]); // No paired cars
-        }
-      } else {
-        return res.status(200).json([]); // Device service unavailable
-      }
+      filter.deviceId = { $exists: true, $ne: null };
     }
 
     const cars = await Car.find(filter);
-
-    // If paired filter, enrich each car with its deviceId from the device lookup
-    if (req.query.paired === 'true') {
-      const devices = await fetchFromService(`${DEVICE_SERVICE_URL}/devices?status=ACTIVE`);
-      const deviceMap = {};
-      if (devices && Array.isArray(devices)) {
-        devices.forEach(d => { if (d.carId) deviceMap[d.carId] = d.deviceId; });
-      }
-      const enriched = cars.map(c => {
-        const obj = c.toObject();
-        obj.deviceId = obj.deviceId || deviceMap[obj._id.toString()] || null;
-        return obj;
-      });
-      return res.status(200).json(enriched);
-    }
 
     res.status(200).json(cars);
   } catch (error) {
@@ -212,11 +193,31 @@ router.put('/:id', upload.single('photo'), async (req, res, next) => {
       }
     }
 
+    const oldCar = await Car.findById(req.params.id);
+    if (!oldCar) return sendError(res, 404, 'CAR_NOT_FOUND', 'Car not found');
+
     const car = await Car.findByIdAndUpdate(req.params.id, updateData, {
       new: true,
       runValidators: true
     });
-    if (!car) return sendError(res, 404, 'CAR_NOT_FOUND', 'Car not found');
+    
+    const oldDeviceId = oldCar.deviceId ? oldCar.deviceId.toString() : null;
+    const newDeviceId = car.deviceId ? car.deviceId.toString() : null;
+
+    if (oldDeviceId !== newDeviceId) {
+      if (oldDeviceId) {
+        axios.post(`${DEVICE_SERVICE_URL}/devices/${oldDeviceId}/unpair`, {}, 
+          { headers: { 'x-internal-gateway-key': process.env.INTERNAL_GATEWAY_KEY || 'internal_secret_key' } }
+        ).catch(err => console.warn('Failed to unpair from old device service:', err.message));
+      }
+      if (newDeviceId) {
+        axios.post(`${DEVICE_SERVICE_URL}/devices/${newDeviceId}/pair`, 
+          { carId: car._id.toString() }, 
+          { headers: { 'x-internal-gateway-key': process.env.INTERNAL_GATEWAY_KEY || 'internal_secret_key' } }
+        ).catch(err => console.warn('Failed to sync to new device service:', err.message));
+      }
+    }
+
     res.status(200).json(car);
   } catch (error) {
     next(error);
@@ -224,7 +225,7 @@ router.put('/:id', upload.single('photo'), async (req, res, next) => {
 });
 
 // ✅ PATCH HEALTH (called by Telemetry service)
-router.patch('/:id/health', validate(healthPatchSchema), async (req, res, next) => {
+router.patch('/:id/health', verifyInternalService, validate(healthPatchSchema), async (req, res, next) => {
   try {
     const update = {
       healthStatus:     req.body.healthStatus,
