@@ -38,10 +38,6 @@ app.use(requestLogger('car'));
 const carRoutes = require('./routes/carRoutes');
 app.use('/cars', carRoutes);
 
-// Serve uploaded images
-const path = require('path');
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
 // ── Health / Debug ─────────────────────────────────────────
 app.get('/health', (_req, res) => {
   res.json({ service: 'car', status: 'UP', timestamp: new Date().toISOString() });

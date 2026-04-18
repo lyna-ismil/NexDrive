@@ -94,7 +94,7 @@ router.post('/', upload.single('photo'), async (req, res, next) => {
 
     // Handle photo upload
     if (req.file) {
-      carData.photo = `/uploads/${req.file.filename}`;
+      carData.photo = req.file.path;
     }
 
     // Parse form-data specific fields
@@ -170,7 +170,7 @@ router.put('/:id', upload.single('photo'), async (req, res, next) => {
 
     // Handle photo upload
     if (req.file) {
-      updateData.photo = `/uploads/${req.file.filename}`;
+      updateData.photo = req.file.path;
     }
 
     // Parse form-data specific fields

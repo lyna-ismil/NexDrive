@@ -210,7 +210,7 @@ router.put('/:id', upload.single('photo'), async (req, res, next) => {
     if (error) return sendError(res, 400, 'VALIDATION_ERROR', error.details[0].message);
 
     const updateFields = { ...req.body };
-    if (req.file) updateFields.profilePhoto = `/uploads/${req.file.filename}`;
+    if (req.file) updateFields.profilePhoto = req.file.path;
 
     // Hash password if provided
     if (updateFields.password) {
@@ -248,7 +248,7 @@ router.post('/:id/photo', upload.single('photo'), async (req, res, next) => {
 
     const user = await User.findByIdAndUpdate(
       req.params.id,
-      { profilePhoto: `/uploads/${req.file.filename}` },
+      { profilePhoto: req.file.path },
       { new: true, projection: { password: 0 } }
     );
     if (!user) return sendError(res, 404, 'USER_NOT_FOUND', 'User not found');
@@ -267,10 +267,10 @@ router.put('/:id/kyc', upload.fields([
     const updateFields = {};
 
     if (req.files?.cinImage?.[0]) {
-      updateFields.cinImageUrl = `/uploads/${req.files.cinImage[0].filename}`;
+      updateFields.cinImageUrl = req.files.cinImage[0].path;
     }
     if (req.files?.licenseImage?.[0]) {
-      updateFields.licenseImageUrl = `/uploads/${req.files.licenseImage[0].filename}`;
+      updateFields.licenseImageUrl = req.files.licenseImage[0].path;
     }
 
     if (Object.keys(updateFields).length === 0) {

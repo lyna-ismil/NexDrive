@@ -62,7 +62,7 @@ router.post('/', upload.single('image'), validate(createReclamationSchema), asyn
 
     const reclamation = new Reclamation({
       ...req.body,
-      image: req.file ? req.file.filename : null
+      image: req.file ? req.file.path : null
     });
 
     await reclamation.save();
@@ -141,7 +141,7 @@ router.put('/:id', upload.single('image'), validate(updateReclamationSchema), as
     if (req.body.status) updateFields.status = req.body.status;
     if (req.body.assignedAdminId) updateFields.assignedAdminId = req.body.assignedAdminId;
     if (req.body.priority) updateFields.priority = req.body.priority;
-    if (req.file) updateFields.image = req.file.filename;
+    if (req.file) updateFields.image = req.file.path;
 
     const updated = await Reclamation.findByIdAndUpdate(
       req.params.id,

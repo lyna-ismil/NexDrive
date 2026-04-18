@@ -38,10 +38,6 @@ app.use(requestLogger('admin'));
 const adminRoutes = require('./routes/adminRoutes');
 app.use('/admins', adminRoutes);
 
-// Serve uploaded images
-const path = require('path');
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
 // ── Health / Debug ─────────────────────────────────────────
 app.get('/health', (_req, res) => {
   res.json({ service: 'admin', status: 'UP', timestamp: new Date().toISOString() });

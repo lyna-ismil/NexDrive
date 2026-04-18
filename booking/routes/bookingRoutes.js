@@ -122,7 +122,7 @@ router.post('/', upload.single('image'), validate(createBookingSchema), async (r
     }
 
     const bookingData = { ...req.body };
-    if (req.file) bookingData.image = `/uploads/${req.file.filename}`;
+    if (req.file) bookingData.image = req.file.path;
 
     const booking = new Booking(bookingData);
     await booking.save();
@@ -290,7 +290,7 @@ router.put('/:id', upload.single('image'), (req, res, next) => {
 }, validate(updateBookingSchema), async (req, res, next) => {
   try {
     const updateFields = { ...req.body };
-    if (req.file) updateFields.image = `/uploads/${req.file.filename}`;
+    if (req.file) updateFields.image = req.file.path;
 
     const booking = await Booking.findByIdAndUpdate(req.params.id, updateFields, {
       new: true,
@@ -350,8 +350,6 @@ router.delete('/:id', async (req, res, next) => {
   }
 });
 
-// Serve uploaded images
-router.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // ── Outbox Processor (call via cron) ──────────────────────
 router.post('/process-outbox', async (req, res, next) => {

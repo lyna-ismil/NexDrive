@@ -140,18 +140,7 @@ const verifyDatabaseConnections = async () => {
 };
 
 // ── Proxy Setup (with identity headers + correlation ID) ───
-// ✅ Static Proxy for /uploads directly to the User Service
-app.use('/uploads', (req, res, next) => {
-  createProxyMiddleware({
-    target: services['/users'].url,
-    changeOrigin: true,
-    pathRewrite: (path) => path, // keep /uploads prefix
-    onError: (err, req, res) => {
-      console.error(`❌ Proxy Error on /uploads: ${err.message}`);
-      res.status(502).json({ error: { code: 'SERVICE_UNAVAILABLE', message: `Service /uploads is unavailable` } });
-    }
-  })(req, res, next);
-});
+// Images are now served directly from Cloudinary CDN — no /uploads proxy needed.
 
 Object.keys(services).forEach(route => {
   // Always try to decode user JWT to forward identity headers if present.

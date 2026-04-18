@@ -1,4 +1,4 @@
-// Secure upload middleware — delegates to shared/upload.js
+// Secure upload middleware — delegates to shared/upload.js (Cloudinary)
 const path = require('path');
 const upload = require('../../shared/upload')(path.join(__dirname, '../uploads'));
 

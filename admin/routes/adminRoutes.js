@@ -105,7 +105,7 @@ router.put('/:id/photo', upload.single('photo'), async (req, res, next) => {
 
     const admin = await Admin.findByIdAndUpdate(
       req.params.id,
-      { photo: `/uploads/${req.file.filename}` },
+      { photo: req.file.path },
       { new: true, projection: { password: 0 } }
     );
     if (!admin) return sendError(res, 404, 'ADMIN_NOT_FOUND', 'Admin not found');
