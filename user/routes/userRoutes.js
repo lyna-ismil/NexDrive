@@ -31,7 +31,9 @@ const updateUserSchema = Joi.object({
   nbr_fois_allocation: Joi.number().optional(),
   blacklist: Joi.boolean().optional(),
   status:    Joi.string().valid('ACTIVE', 'SUSPENDED').optional(),
-  role:      Joi.string().valid('USER', 'ADMIN').optional()
+  role:      Joi.string().valid('USER', 'ADMIN').optional(),
+  isVerified:   Joi.boolean().optional(),
+  extractedCin: Joi.string().length(8).optional()
 }).min(1);
 
 const createUserSchema = Joi.object({
@@ -210,6 +212,13 @@ router.put('/:id', upload.single('photo'), async (req, res, next) => {
     if (error) return sendError(res, 400, 'VALIDATION_ERROR', error.details[0].message);
 
     const updateFields = { ...req.body };
+
+    // Map KYC extractedCin to the cin field in the User model
+    if (updateFields.extractedCin !== undefined) {
+      updateFields.cin = updateFields.extractedCin;
+      delete updateFields.extractedCin;
+    }
+
     if (req.file) updateFields.profilePhoto = req.file.path;
 
     // Hash password if provided

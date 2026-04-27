@@ -8,6 +8,7 @@ const UserSchema = new mongoose.Schema({
   phone:    { type: String, required: true, trim: true },
   cinImageUrl:     { type: String, required: false, trim: true },
   licenseImageUrl: { type: String, required: false, trim: true },
+  cin:             { type: String, trim: true, unique: true, sparse: true },
   isVerified:      { type: Boolean, default: false },
   eHouwiyaId:      { type: String, unique: true, sparse: true },
   profilePhoto:    { type: String, trim: true, default: null },

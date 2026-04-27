@@ -56,7 +56,9 @@ const services = {
   "/users":         { url: "http://localhost:6004", path: path.join(__dirname, "../user/app.js") },
   "/telemetry":     { url: "http://localhost:6005", path: path.join(__dirname, "../telemetry/app.js") },
   "/devices":       { url: "http://localhost:6006", path: path.join(__dirname, "../device/app.js") },
-  "/notifications": { url: "http://localhost:6007", path: path.join(__dirname, "../notification/app.js") }
+  "/notifications": { url: "http://localhost:6007", path: path.join(__dirname, "../notification/app.js") },
+  "/pricing":       { url: process.env.PRICING_SERVICE || "http://localhost:8000", path: null },
+  "/kyc":           { url: process.env.KYC_SERVICE || "http://localhost:8001", path: null }
 };
 
 // Routes that use device auth instead of user JWT
@@ -93,6 +95,11 @@ const microservicesProcesses = {};
 const startMicroservices = () => {
   console.log("🚀 Starting Microservices...");
   for (const [route, service] of Object.entries(services)) {
+    if (!service.path) {
+      console.log(`ℹ️  Skipping spawn for ${route} (External Service)`);
+      continue;
+    }
+
     if (microservicesProcesses[route]) {
       console.log(`✅ ${route} is already running.`);
       continue;
@@ -150,7 +157,11 @@ Object.keys(services).forEach(route => {
     createProxyMiddleware({
       target: services[route].url,
       changeOrigin: true,
-      pathRewrite: (path) => path,
+      pathRewrite: (path) => {
+        if (route === '/pricing') return path.replace(/^\/pricing/, '');
+        if (route === '/kyc') return path.replace(/^\/kyc/, '');
+        return path;
+      },
       onError: (err, req, res) => {
         console.error(`❌ Proxy Error on ${route}: ${err.message}`);
         res.status(502).json({ error: { code: 'SERVICE_UNAVAILABLE', message: `Service ${route} is unavailable` } });
